@@ -1,7 +1,5 @@
 ﻿using RabbitConsumer.Consumers;
 using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
-using System.Text;
 
 
 namespace RabbitConsumer;
@@ -54,14 +52,46 @@ public class Program
         await Setup("log.info", "log.info");
         await Setup("log.all", "log.#");
 
+        await InitializeQuorumQueue(channel);
+
+
         // 3. Start Classes
         await new ErrorConsumer(channel, "log.error", "ERROR_WORKER").StartAsync();
         await new LogConsumer(channel, "log.info", "INFO_WORKER").StartAsync();
         await new LogConsumer(channel, "log.all", "ALL_WORKER").StartAsync();
         await new DeadLetterConsumer(channel, dlxQueue, "DLX_WORKER").StartAsync();
+        await new QuorumLogConsumer(channel, "quorum.logs.critical", "QUOROM_WORKER").StartAsync();
 
         Console.WriteLine("All consumers started. Waiting for logs...");
         await Task.Delay(-1);
+    }
+
+    public static async Task InitializeQuorumQueue(IChannel channel)
+    {
+        const string queueName = "quorum.logs.critical";
+        const string exchangeName = "quorum.main.topic";
+
+        await channel.ExchangeDeclareAsync(exchangeName, ExchangeType.Topic, false, true); //enusre main exchange exists
+
+
+        var quorumArgs = new Dictionary<string, object>
+    {
+        { "x-queue-type", "quorum" },                // Required for Quorum
+        { "x-quorum-initial-group-size", 3 },       // Create 3 replicas (Leader + 2 Followers)
+        { "x-delivery-limit", 5 },                  // Drop/DLX after 5 failed tries
+        { "x-dead-letter-exchange", "dlx.exchange" },// Where to send "poison" messages
+        { "x-dead-letter-routing-key", "dead.logs" }
+     };
+
+        // Quorum queues MUST be durable: true, exclusive: false
+        await channel.QueueDeclareAsync(
+            queue: queueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: quorumArgs);
+
+        await channel.QueueBindAsync(queueName, exchangeName, "log.critical.#");
     }
 }
 

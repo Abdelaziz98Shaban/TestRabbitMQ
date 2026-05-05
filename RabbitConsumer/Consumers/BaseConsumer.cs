@@ -17,22 +17,29 @@ public abstract class BaseConsumer(IChannel channel, string queueName, string co
         await Channel.BasicConsumeAsync(QueueName, false, ConsumerTag, consumer);
     }
 
-    private async Task OnMessageReceived(object sender, BasicDeliverEventArgs ea)
+    private async Task OnMessageReceived(object sender, BasicDeliverEventArgs @event)
     {
-        var message = Encoding.UTF8.GetString(ea.Body.ToArray());
+        var message = Encoding.UTF8.GetString(@event.Body.ToArray());
         try
         {
-            bool success = await ProcessMessageAsync(message, ea.RoutingKey);
+            // Quorum Feature: Check how many times this has been delivered
+            long deliveryCount = 0;
+            if (@event.BasicProperties.Headers?.ContainsKey("x-delivery-count") == true)
+            {
+                deliveryCount = (long)@event.BasicProperties.Headers["x-delivery-count"];
+            }
+
+            bool success = await ProcessMessageAsync(message, @event.RoutingKey);
 
             if (success)
-                await Channel.BasicAckAsync(ea.DeliveryTag, false);
+                await Channel.BasicAckAsync(@event.DeliveryTag, false);
             else
-                // Send to Dead Letter Exchange
-                await Channel.BasicNackAsync(ea.DeliveryTag, false, false);
+                // await Channel.BasicNackAsync(@event.DeliveryTag, false, false);                // Send to Dead Letter Exchange
+                await Channel.BasicNackAsync(@event.DeliveryTag, false, true); // requeeue for retry (Quorum will track delivery count and drop after limit)
         }
         catch (Exception)
         {
-            await Channel.BasicNackAsync(ea.DeliveryTag, false, false);
+            await Channel.BasicNackAsync(@event.DeliveryTag, false, false);
         }
     }
 

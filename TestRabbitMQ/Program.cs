@@ -36,5 +36,29 @@ public class Program
             Console.WriteLine($"Sent: {msg}");
             await Task.Delay(100);
         }
+
+       await PublishCriticalLog(channel, "fail");
+    }
+
+    public static async Task PublishCriticalLog(IChannel channel, string message)
+    {
+        await channel.ExchangeDeclareAsync("quorum.main.topic", ExchangeType.Topic, autoDelete: true);
+
+
+        var body = Encoding.UTF8.GetBytes(message);
+
+        // Set persistence to work with the Quorum Queue's disk-based nature
+        var props = new BasicProperties
+        {
+            Persistent = true, // DeliveryMode = 2
+            Timestamp = new AmqpTimestamp(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        };
+
+        await channel.BasicPublishAsync(
+            exchange: "quorum.main.topic",
+            routingKey: "log.critical.ui",
+            mandatory: true, // Ensure it hits a queue
+            basicProperties: props,
+            body: body);
     }
 }
