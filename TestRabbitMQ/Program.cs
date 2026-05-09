@@ -22,7 +22,7 @@ public class Program
         string exchangeName = "test.topic_logs";
 
         // Publisher only 'ensures' the Exchange exists
-        await channel.ExchangeDeclareAsync(exchangeName, ExchangeType.Topic, autoDelete: true);
+        await channel.ExchangeDeclareAsync(exchangeName, ExchangeType.Topic, durable: true, autoDelete: false);
 
         for (int i = 0; i < 50; i++)
         {
@@ -37,7 +37,8 @@ public class Program
             await Task.Delay(100);
         }
 
-       await PublishCriticalLog(channel, "fail");
+        await PublishCriticalLog(channel, "fail");
+        await PublishToStreamAsync(channel, "test.audit.stream");
     }
 
     public static async Task PublishCriticalLog(IChannel channel, string message)
@@ -60,5 +61,39 @@ public class Program
             mandatory: true, // Ensure it hits a queue
             basicProperties: props,
             body: body);
+    }
+
+    public static async Task PublishToStreamAsync(IChannel channel, string streamName)
+    {
+        // 1. Define Properties
+        var props = new BasicProperties
+        {
+            // REQUIRED: Streams are durable; messages should be persistent
+            Persistent = true,
+
+            // OPTIONAL: CorrelationId or a custom header can be used for 
+            // server-side deduplication if the stream is configured for it.
+            MessageId = Guid.NewGuid().ToString(),
+            Timestamp = new AmqpTimestamp(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+        };
+
+        for (int i = 0; i < 10; i++)
+        {
+            string message = $"User logged in {DateTime.Now.Second}";
+
+            var body = Encoding.UTF8.GetBytes(message);
+            // 2. Publish
+            // If publishing directly to the stream, use the stream name as the routing key
+            // and leave the exchange empty, or use your defined Topic Exchange.
+            await channel.BasicPublishAsync(
+                exchange: "test.straming_topic_logs",
+                routingKey: "log.audit.event",
+                mandatory: true,
+                basicProperties: props,
+                body: body);
+
+            Console.WriteLine($"[STREAM-PUB] Sent to {streamName}: {message}");
+
+        }
     }
 }
